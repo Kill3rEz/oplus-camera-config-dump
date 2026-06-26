@@ -7,3 +7,8 @@ venv/
 
 # Output files produced by the dumper
 decrypted_config_*.json
+
+# RE / firmware working artifacts — proprietary, do not publish
+re/
+*.so
+*.bin
