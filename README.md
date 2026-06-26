@@ -184,6 +184,54 @@ The output filenames embed the RAM address of the buffer at the time of the dump
 
 ---
 
+## Offline decryption (from a firmware dump)
+
+The Frida tool above hooks the *running* app. If you instead have the raw firmware (or read-access to `/odm` on the device), you can decrypt the config files **directly, offline** — no rooted device, no `frida-server`, no app launch — with `decrypt_camera_config.py`.
+
+The encrypted configs live in `/odm/etc/camera/config/`. Each one is wrapped in a small container:
+
+```
+[4-byte header: 01 01 xx xx] [ AES-128-ECB ciphertext ] [4-byte footer: yy yy yy ff]
+```
+
+and is encrypted with **AES-128 in ECB mode with PKCS#7 padding**, using a 16-byte key embedded in `libOplusSecurity.so` (the same `decode()` routine the Frida tool hooks). This script reimplements that routine exactly, so its output is byte-for-byte identical to what the app produces at runtime.
+
+### Usage
+
+```bash
+pip install -r requirements.txt   # needs pycryptodome
+
+# point it at a directory (decrypts every encrypted file it finds)…
+python3 decrypt_camera_config.py /path/to/odm/etc/camera/config -o decrypted/
+
+# …or at individual files
+python3 decrypt_camera_config.py oplus_camera_config -o decrypted/
+```
+
+Files that aren't encrypted (plain JSON / protobuf) are detected by the missing `01 01` magic and skipped. Each decrypted file is written as `<name>.json`.
+
+| Argument         | Default      | Description                                |
+|------------------|--------------|--------------------------------------------|
+| `paths`          | —            | encrypted file(s) or a directory to scan   |
+| `-o`, `--outdir` | `.`          | output directory                           |
+| `--key`          | (embedded)   | override the AES-128 key (32 hex chars)    |
+
+### What gets decrypted
+
+On the tested build, `/odm/etc/camera/config/` ships five encrypted files:
+
+| File                                         | Decrypts to                                  |
+|----------------------------------------------|----------------------------------------------|
+| `oplus_camera_config`                        | Vendor tags (`com.oplus.*` HAL values)       |
+| `oplus_camera_algo_switch_config`            | APS pipeline config (`aps_capture_configs`)  |
+| `oplus_camera_aps_config`                    | APS config (`file_version 15.002`)           |
+| `oplus_camera_preview_decision_config.json`  | `multiAlgo` decision tree                    |
+| `oplus_preview_decision_params.json`         | APS schema / keyword dictionary              |
+
+> **Note:** as with the runtime dumps, some values are multi-line strings containing embedded newlines/control characters, so a *strict* JSON parser may reject them — they parse fine with a lenient reader. See [What files can you extract?](#what-files-can-you-extract) for what each file's contents mean.
+
+---
+
 ## Notes & limitations
 
 - **Stale/cached app data is the #1 reason "nothing happens."** Always run `adb shell pm clear <package>` right before launching the script, otherwise the app may skip decryption entirely and reuse data from the previous run.
